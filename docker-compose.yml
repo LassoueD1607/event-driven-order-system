@@ -1,0 +1,55 @@
+# ==================================================================================
+#  Phase 1 — A single Kafka broker, running in Docker.
+#  Modern Kafka (KRaft mode) — no ZooKeeper needed anymore. 🎉
+#  Every line below is explained so you know EXACTLY what it does.
+# ==================================================================================
+
+services:                            # "services" = the list of containers we want to run. Each item under it is one container.
+
+  kafka:                             # The NAME of our service (we chose "kafka"). This is just a label inside this file.
+
+    image: apache/kafka:3.9.0        # WHICH software to run. Docker downloads "apache/kafka" version "3.9.0" from Docker Hub.
+
+    container_name: kafka            # The real name of the running container. Lets us type "docker exec kafka ..." instead of a random ID.
+
+    ports:                           # "ports" = which container doors to connect to our own computer (the host).
+      - "9092:9092"                  # Format is HOST:CONTAINER. Left 9092 = port on YOUR PC → right 9092 = port inside the container.
+                                     #   So "localhost:9092" on your machine reaches Kafka. Needed for the Java app in Phase 3.
+
+    environment:                     # "environment" = settings we pass into the container as environment variables.
+                                     #   The apache/kafka image turns every KAFKA_* variable into a line in Kafka's config file.
+
+      # --- Identity: in a single-machine setup, this one node plays BOTH roles ---
+      KAFKA_NODE_ID: 1               # A unique number for this broker. With many brokers you'd have ids 1, 2, 3... Here just "1".
+      KAFKA_PROCESS_ROLES: broker,controller
+                                     # A Kafka node can be a "broker" (stores/serves messages) and/or a "controller" (manages the
+                                     #   cluster: who is leader, which partitions exist). We make it BOTH since we only have one node.
+
+      # --- Listeners: the network "doors" the broker opens and the address it tells clients to use ---
+      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
+                                     # The doors Kafka OPENS. Two of them:
+                                     #   PLAINTEXT://:9092  = door for normal clients (producers/consumers). Empty host = all interfaces.
+                                     #   CONTROLLER://:9093 = internal door used only for cluster-management traffic.
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092
+                                     # The address Kafka HANDS BACK to a client saying "reconnect here". Must be a real, routable
+                                     #   address (never 0.0.0.0). Clients first hit 9092, then Kafka replies "talk to localhost:9092".
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+                                     # Says what security each listener NAME uses. Here both use "PLAINTEXT" = no encryption (fine for
+                                     #   local learning). In production you'd map a listener to SSL/SASL instead.
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+                                     # Tells Kafka WHICH listener name is the controller door. We named it "CONTROLLER" above.
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@localhost:9093
+                                     # The list of controllers that vote on cluster decisions. Format is NODE_ID@host:port.
+                                     #   "1@localhost:9093" = the only voter is node 1, reachable at localhost:9093.
+
+      # --- Single-node safety settings: with only 1 broker we can keep just 1 copy of everything ---
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+                                     # Kafka has an internal topic that remembers "how far each consumer has read". Keep 1 copy of it.
+                                     #   (Default is 3, which would FAIL here because we don't have 3 brokers to copy across.)
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+                                     # Same idea for Kafka's internal "transactions" topic — keep just 1 copy.
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+                                     # "min ISR" = minimum in-sync copies required to accept a write. With 1 broker it must be 1.
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+                                     # When consumers join a group, Kafka can wait a bit before sharing out the work. 0 = don't wait,
+                                     #   start immediately. Great for local testing so we see results instantly.
