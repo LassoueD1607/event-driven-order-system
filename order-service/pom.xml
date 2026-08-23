@@ -1,37 +1,31 @@
-<?xml version="1.0" encoding="UTF-8"?>                            <!-- XML header: this file is XML, UTF-8 text encoding. -->
-<!-- Root <project> tag. xmlns = "tags inside follow Maven 4.0.0 rules". -->
+<?xml version="1.0" encoding="UTF-8"?>
 <project xmlns="http://maven.apache.org/POM/4.0.0"
          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
-    <modelVersion>4.0.0</modelVersion>                          <!-- Version of the POM file FORMAT. Always 4.0.0. -->
+    <modelVersion>4.0.0</modelVersion>
 
-    <!-- Inherit versions + build config from Spring Boot, so all libraries are compatible. -->
     <parent>
-        <groupId>org.springframework.boot</groupId>             <!-- The parent's organization. -->
-        <artifactId>spring-boot-starter-parent</artifactId>     <!-- The parent project name. -->
-        <version>3.3.5</version>                                <!-- THE Spring Boot version we use. -->
-        <relativePath/>                                         <!-- Empty = download parent, don't look on disk. -->
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-starter-parent</artifactId>
+        <version>3.3.5</version>
+        <relativePath/>
     </parent>
 
-    <!-- OUR app's identity (like a unique address for this project). -->
-    <groupId>com.example</groupId>                              <!-- Our organization / base package. -->
-    <artifactId>order-service</artifactId>                      <!-- This project's name. -->
-    <version>0.0.1-SNAPSHOT</version>                           <!-- Our version. SNAPSHOT = still in development. -->
-    <name>order-service</name>                                  <!-- Human-friendly name (informational). -->
-    <description>Phase 4 - produces Order events as JSON</description>
+    <groupId>com.example</groupId>
+    <artifactId>order-service</artifactId>
+    <version>0.0.1-SNAPSHOT</version>
+    <name>order-service</name>
+    <description>Produces Order events as JSON to Kafka</description>
 
     <properties>
-        <java.version>17</java.version>                         <!-- Compile for Java 17. -->
+        <java.version>17</java.version>
     </properties>
 
-    <dependencies>                                              <!-- The libraries our app needs. -->
-        <!-- Spring Web: embedded Tomcat server + REST support (@RestController). -->
+    <dependencies>
         <dependency>
             <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-web</artifactId>    <!-- No version needed - the parent decides it. -->
+            <artifactId>spring-boot-starter-web</artifactId>
         </dependency>
-
-        <!-- Spring for Apache Kafka: KafkaTemplate, @KafkaListener, JSON (de)serializers. -->
         <dependency>
             <groupId>org.springframework.kafka</groupId>
             <artifactId>spring-kafka</artifactId>
@@ -40,7 +34,6 @@
 
     <build>
         <plugins>
-            <!-- Lets us run "mvn spring-boot:run" and package a single runnable jar. -->
             <plugin>
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-maven-plugin</artifactId>

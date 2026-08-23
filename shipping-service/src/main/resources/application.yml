@@ -7,17 +7,13 @@ spring:
       group-id: shipping-group
       auto-offset-reset: earliest
       key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
-      # NEW: turn incoming JSON text back into a Java object.
       value-deserializer: org.springframework.kafka.support.serializer.JsonDeserializer
       properties:
-        # Security: only trust these packages when rebuilding objects from JSON.
+        # The producer tags each message with its own class name. Ignore that header
+        # and always deserialize into this service's Order class instead.
         spring.json.trusted.packages: "com.example.shippingservice.model"
-        # The producer stamps its OWN class name (com.example.orderservice.model.Order)
-        # into a header. We don't have that class! So we tell the deserializer:
-        #   1) ignore that header, and
-        #   2) always build OUR Order class instead.
         spring.json.use.type.headers: false
         spring.json.value.default.type: com.example.shippingservice.model.Order
 
 server:
-  port: 8085          # shipping-service listens here (different port from order-service!)
+  port: 8085

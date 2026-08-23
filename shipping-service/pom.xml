@@ -1,38 +1,31 @@
-<?xml version="1.0" encoding="UTF-8"?>                            <!-- XML header: XML file, UTF-8 encoding. -->
-<!-- Root <project> tag following Maven 4.0.0 rules. -->
+<?xml version="1.0" encoding="UTF-8"?>
 <project xmlns="http://maven.apache.org/POM/4.0.0"
          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
-    <modelVersion>4.0.0</modelVersion>                          <!-- POM format version. Always 4.0.0. -->
+    <modelVersion>4.0.0</modelVersion>
 
-    <!-- Inherit compatible library versions + build config from Spring Boot. -->
     <parent>
         <groupId>org.springframework.boot</groupId>
         <artifactId>spring-boot-starter-parent</artifactId>
-        <version>3.3.5</version>                                <!-- Same Spring Boot version as order-service. -->
+        <version>3.3.5</version>
         <relativePath/>
     </parent>
 
-    <!-- THIS service's identity (note the different artifactId). -->
     <groupId>com.example</groupId>
-    <artifactId>shipping-service</artifactId>                   <!-- the only real difference from order-service's pom. -->
+    <artifactId>shipping-service</artifactId>
     <version>0.0.1-SNAPSHOT</version>
     <name>shipping-service</name>
-    <description>Phase 4 - consumes Order events and ships them</description>
+    <description>Consumes Order events and ships them</description>
 
     <properties>
-        <java.version>17</java.version>                         <!-- Compile for Java 17. -->
+        <java.version>17</java.version>
     </properties>
 
     <dependencies>
-        <!-- We don't expose REST here, but the web starter keeps the app running
-             and lets us add a health endpoint later. -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-web</artifactId>
         </dependency>
-
-        <!-- Spring for Apache Kafka: @KafkaListener + JSON deserializer live here. -->
         <dependency>
             <groupId>org.springframework.kafka</groupId>
             <artifactId>spring-kafka</artifactId>
@@ -41,7 +34,6 @@
 
     <build>
         <plugins>
-            <!-- Enables "mvn spring-boot:run". -->
             <plugin>
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-maven-plugin</artifactId>

@@ -1,19 +1,20 @@
-package com.example.shippingservice.model;                      // NOTE: shippingservice package (NOT orderservice) - this is a SEPARATE copy.
+package com.example.shippingservice.model;
 
 /**
- * A separate copy of Order living in shipping-service's OWN package.
- * Why duplicate instead of share code? Because these are independent microservices:
- * they agree on the JSON SHAPE (the contract), not on shared Java classes. shipping-service
- * could be rewritten in Python and nothing would break. This is real microservice thinking.
+ * Order event as consumed by shipping-service. Deliberately a separate copy from
+ * order-service's class: the services share a JSON contract, not Java code.
  */
 public class Order {
 
-    private String orderId;                                      // Same four fields as the producer's Order...
+    private String orderId;
     private String product;
     private int quantity;
     private double price;
 
-    public Order() {}
+    public Order() {
+        // Required by Jackson for JSON deserialization.
+    }
+
     public String getOrderId() { return orderId; }
     public void setOrderId(String orderId) { this.orderId = orderId; }
 
@@ -26,7 +27,7 @@ public class Order {
     public double getPrice() { return price; }
     public void setPrice(double price) { this.price = price; }
 
-    @Override                                                   // Readable logging output.
+    @Override
     public String toString() {
         return "Order{orderId='" + orderId + "', product='" + product +
                "', quantity=" + quantity + ", price=" + price + '}';

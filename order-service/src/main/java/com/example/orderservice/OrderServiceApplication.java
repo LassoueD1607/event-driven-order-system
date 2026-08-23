@@ -1,7 +1,7 @@
 package com.example.orderservice;
 
-import org.springframework.boot.SpringApplication;                  // Import: the class that boots a Spring Boot app.
-import org.springframework.boot.autoconfigure.SpringBootApplication;// Import: the all-in-one Spring Boot annotation.
+import org.springframework.boot.SpringApplication;
+import org.springframework.boot.autoconfigure.SpringBootApplication;
 
 @SpringBootApplication
 public class OrderServiceApplication {
