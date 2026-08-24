@@ -1,12 +1,12 @@
-package com.example.shippingservice.model;
+package com.example.inventoryservice.model;
 
 /**
- * Order event as consumed by shipping-service — now from "payment-events", not "orders"
- * directly, since shipping should only happen once payment has actually succeeded.
- * Deliberately a separate copy from the other services' classes: they share a JSON
- * contract, not Java code.
+ * Shape shared, by convention, across "orders", "stock-events" and "payment-events" —
+ * not a shared library on purpose (each service keeps its own copy, per the JSON-contract-only
+ * rule already used elsewhere in this project). status/reason are simply absent on messages
+ * from a stage that doesn't set them (e.g. the original "orders" message has status = null).
  */
-public class Order {
+public class OrderEvent {
 
     private String orderId;
     private String product;
@@ -15,8 +15,17 @@ public class Order {
     private String status;
     private String reason;
 
-    public Order() {
+    public OrderEvent() {
         // Required by Jackson for JSON deserialization.
+    }
+
+    public OrderEvent(String orderId, String product, int quantity, double price, String status, String reason) {
+        this.orderId = orderId;
+        this.product = product;
+        this.quantity = quantity;
+        this.price = price;
+        this.status = status;
+        this.reason = reason;
     }
 
     public String getOrderId() { return orderId; }
@@ -39,7 +48,7 @@ public class Order {
 
     @Override
     public String toString() {
-        return "Order{orderId='" + orderId + "', product='" + product +
+        return "OrderEvent{orderId='" + orderId + "', product='" + product +
                "', quantity=" + quantity + ", price=" + price +
                ", status='" + status + "', reason='" + reason + "'}";
     }

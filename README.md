@@ -1,7 +1,9 @@
-# Kafka Learning Project
+# Event-Driven Order System (Kafka)
 
-A hands-on journey learning Apache Kafka with Java + Spring Boot, built step by step.
-This document explains **what Kafka is**, **what we built**, **how to run it**, and **how to test it** — in plain language.
+A hands-on journey learning Apache Kafka with Java + Spring Boot, built step by step —
+starting from a single producer/consumer pair and growing into a 4-service **Saga** with a
+real compensating transaction. This document explains **what Kafka is**, **what we built**,
+**how to run it**, and **how to test it (including the failure paths)** — in plain language.
 
 ---
 
@@ -41,54 +43,72 @@ Kafka is a **post office for programs**. One program drops off a message ("an or
 
 ---
 
-## 3. What we built
+## 3. What we built: a Saga with a compensating transaction
+
+The system started as a simple producer → consumer pair. It has grown into a **choreographed
+Saga**: four independent services that only ever talk through Kafka events, each reacting to
+the previous stage's outcome — including a genuine **rollback** when a later step fails.
 
 ```
-                    ┌──────────────────────────┐
-                    │   docker-compose.yml     │
-                    │      KAFKA BROKER         │   ← the "post office" (infrastructure)
-                    │      localhost:9092      │
-                    └────────────┬─────────────┘
-                                 │  everyone connects here
-                 ┌───────────────┴───────────────┐
-                 │                               │
-         ┌───────┴────────┐             ┌────────┴────────┐
-         │ order-service  │  topic:     │ shipping-service │
-         │  (producer)    │  "orders"   │  (consumer)      │
-         │  POST /api/... │ ──────────▶ │  @KafkaListener  │
-         └────────────────┘             └─────────────────┘
+                         ┌──────────────────────────┐
+                         │   docker-compose.yml     │
+                         │      KAFKA BROKER         │
+                         │      localhost:9092      │
+                         └────────────┬─────────────┘
+                                      │ everyone connects here
+        ┌──────────────┬─────────────┴─────────────┬──────────────┐
+        │              │                           │              │
+ ┌──────┴──────┐ ┌─────┴───────┐            ┌──────┴──────┐ ┌─────┴───────┐
+ │order-service│ │inventory-   │            │payment-     │ │shipping-    │
+ │(producer)   │ │service      │            │service      │ │service      │
+ │POST /orders │ │             │            │             │ │             │
+ └──────┬──────┘ └──┬───────┬──┘            └──┬──────┬───┘ └──────┬──────┘
+        │           │       │                  │      │            │
+        │  orders   │       │ stock-events     │      │payment-    │
+        └──────────►│       └─────────────────►│      │events      │
+                     │RESERVED / REJECTED       │      └───────────►│
+                     │                          │COMPLETED / FAILED │(only on
+                     │◄─────────────────────────┘                   │ COMPLETED)
+                     │  payment-events (FAILED only)
+                     │  → releases the stock it reserved
+                     │    (the compensating transaction)
 ```
-
-Three parts, each independent:
 
 | Component | Folder | Role | Port |
 |-----------|--------|------|------|
 | **Kafka broker** | `docker-compose.yml` | Runs Kafka itself (KRaft mode, no ZooKeeper) | 9092 |
-| **order-service** | `order-service/` | Producer — turns an HTTP request into an `Order` event (JSON) | 8086 |
-| **shipping-service** | `shipping-service/` | Consumer — receives the `Order` and "ships" it | 8085 (or override) |
+| **order-service** | `order-service/` | Producer — turns an HTTP request into an `Order` event | 8086 |
+| **inventory-service** | `inventory-service/` | Reserves/rejects stock; releases it on payment failure | 8087 |
+| **payment-service** | `payment-service/` | Charges the order once stock is reserved | 8088 |
+| **shipping-service** | `shipping-service/` | Ships the order once payment has completed | 8085 |
 
-They only agree on the **JSON shape** of an `Order`, not on shared Java code — that's real microservice thinking (shipping-service could be rewritten in another language and nothing breaks).
+Every service keeps its own copy of the event shape (`OrderEvent` / `Order`) — they agree on
+**JSON**, never on shared Java code. That's deliberate: it's the real-world constraint that
+makes this a multi-service system rather than one app split into files.
 
-### How an order flows
+### The saga, step by step
 
-```
-curl POST {"product":"Laptop","quantity":2,"price":999}
-      │
-      ▼
-OrderController          → assigns a UUID as orderId
-      │
-      ▼
-OrderProducer            → kafkaTemplate.send("orders", orderId, order)   [JSON serialized]
-      │
-      ▼
-   KAFKA topic "orders"  → stored on a partition (chosen by hash of the key)
-      │
-      ▼
-OrderConsumer            → @KafkaListener rebuilds the Order from JSON
-      │
-      ▼
-log: "Received order ... shipping 2 x 'Laptop' (total $1998)"
-```
+| # | Topic | Producer | Consumer(s) | What happens |
+|---|-------|----------|-------------|---------------|
+| 1 | `orders` | order-service | inventory-service | An order is placed. |
+| 2 | `stock-events` | inventory-service | payment-service | Stock is reserved (`RESERVED`) or the order is rejected (`REJECTED`, insufficient stock) — payment only reacts to `RESERVED`. |
+| 3 | `payment-events` | payment-service | shipping-service, inventory-service | Payment completes (`COMPLETED`) or fails (`FAILED`). Shipping only reacts to `COMPLETED`. |
+| 4 | *(compensation)* | inventory-service | — | On `FAILED`, inventory-service **releases the stock it reserved in step 2** — the saga's compensating transaction. Nothing was double-charged or left inconsistent. |
+
+**Why choreography (events reacting to events) instead of orchestration (one service calling
+the others)?** No single service needs to know the whole flow — inventory-service doesn't know
+shipping exists, and shipping doesn't know inventory exists. Each just reacts to what it's
+subscribed to. The trade-off: the *overall* flow only exists implicitly, spread across services
+— which is exactly why this README documents it explicitly.
+
+**Idempotency:** every consumer (`inventory-service`, `payment-service`, `shipping-service`)
+tracks which order IDs it has already processed and ignores redelivered duplicates. Kafka is
+at-least-once, so without this, a redelivered message would double-decrement stock, double-charge,
+or double-ship.
+
+**Retries + dead-letter queue:** every consumer retries a failing message twice (1s apart), then
+routes it to a `<topic>.DLT` dead-letter topic instead of blocking the partition forever on one
+poison message.
 
 ---
 
@@ -115,58 +135,83 @@ docker compose up -d
 ```
 Stop later with `docker compose stop`, start again with `docker compose start`.
 
-### Step 2 — Start the producer (its own terminal)
+### Step 2 — Start all four services (each in its own terminal)
 ```bash
-cd C:/workspace/personal-project/kafka-demo/order-service
-mvn spring-boot:run
+cd C:/workspace/personal-project/kafka-demo/order-service      && mvn spring-boot:run   # :8086
+cd C:/workspace/personal-project/kafka-demo/inventory-service  && mvn spring-boot:run   # :8087
+cd C:/workspace/personal-project/kafka-demo/payment-service    && mvn spring-boot:run   # :8088
+cd C:/workspace/personal-project/kafka-demo/shipping-service   && mvn spring-boot:run   # :8085
 ```
-Wait for `Started OrderServiceApplication`.
+Wait for each to log `Started ...Application`. Order doesn't matter much — Kafka buffers events
+until a consumer is ready — but starting order-service last makes the logs easiest to follow.
 
-### Step 3 — Start a consumer (its own terminal)
-```bash
-cd C:/workspace/personal-project/kafka-demo/shipping-service
-mvn spring-boot:run "-Dspring-boot.run.arguments=--server.port=8091"
-```
-Wait for `Started ShippingServiceApplication`.
-
-### Step 4 — Send an order (PowerShell)
+### Step 3 — Place an order (PowerShell)
 ```powershell
 Invoke-RestMethod -Uri "http://localhost:8086/api/orders" -Method Post -ContentType "application/json" -Body (@{ product = "Laptop"; quantity = 2; price = 999.0 } | ConvertTo-Json)
 ```
-You should get back `Order placed & published: <id>`, and see it printed in the consumer's terminal.
 
-> **Note (PowerShell):** use `Invoke-RestMethod` with `ConvertTo-Json` as above.
-> Using `curl.exe -d "{\"...\"}"` fails with 400 because PowerShell mangles the quotes.
+Watch the four terminals: order-service publishes, inventory-service reserves stock and
+publishes, payment-service charges and publishes, shipping-service ships.
+
+> **Note (PowerShell):** use `Invoke-RestMethod` with `ConvertTo-Json` as shown.
+> `curl.exe -d "{\"...\"}"` fails with 400 because PowerShell mangles the quotes.
 
 ---
 
-## 6. How to test scaling (the fun part)
+## 6. Testing the three paths
 
-**Scaling = running the consumer more than once.** The instances automatically form one group and split the work.
+### Path A — happy path
+```powershell
+Invoke-RestMethod -Uri "http://localhost:8086/api/orders" -Method Post -ContentType "application/json" -Body (@{ product = "Laptop"; quantity = 1; price = 500.0 } | ConvertTo-Json)
+```
+Check each stage:
+```powershell
+Invoke-RestMethod http://localhost:8087/api/inventory   # stock decremented
+Invoke-RestMethod http://localhost:8088/api/payments    # COMPLETED
+Invoke-RestMethod http://localhost:8085/api/shipments    # shipped
+```
 
-1. Make sure the topic has multiple partitions (we set 3):
+### Path B — insufficient stock (rejected before payment is ever attempted)
+Order more than the seeded stock (100) of a **new** product name:
+```powershell
+Invoke-RestMethod -Uri "http://localhost:8086/api/orders" -Method Post -ContentType "application/json" -Body (@{ product = "RareItem"; quantity = 500; price = 50.0 } | ConvertTo-Json)
+```
+`inventory-service` logs a `REJECTED` and publishes to `stock-events` — `payment-service`
+ignores it (filters for `RESERVED` only), so nothing is charged and nothing ships.
+
+### Path C — payment fails → compensating transaction (the interesting one)
+Any product name containing "fail" forces a deterministic payment failure:
+```powershell
+Invoke-RestMethod -Uri "http://localhost:8086/api/orders" -Method Post -ContentType "application/json" -Body (@{ product = "FailProduct"; quantity = 3; price = 20.0 } | ConvertTo-Json)
+```
+1. `inventory-service` reserves 3 units (stock goes down) — check `GET :8087/api/inventory`.
+2. `payment-service` fails the charge — check `GET :8088/api/payments` → `status: FAILED`.
+3. `inventory-service` consumes the `FAILED` event and **releases the 3 units back** —
+   check `GET :8087/api/inventory` again: stock is back to what it was before step 1.
+4. `shipping-service` never sees this order — check `GET :8085/api/shipments`.
+
+That round trip — reserve, fail, release — is the saga's compensating transaction working end to end.
+
+---
+
+## 7. Testing scaling (the fun part)
+
+**Scaling = running a consumer more than once.** The instances automatically form one group and split the work.
+
+1. Every topic here has 3 partitions:
    ```bash
    docker exec kafka /opt/kafka/bin/kafka-topics.sh --describe --topic orders --bootstrap-server localhost:9092
    ```
-2. Start **2–3 consumer instances**, each on a different port (repeat Step 3 with `--server.port=8091`, `8092`, `8093`).
-3. Send a burst of orders (PowerShell):
-   ```powershell
-   for ($i=1; $i -le 9; $i++) {
-     $body = @{ product = "Item-$i"; quantity = $i; price = 10.0 } | ConvertTo-Json
-     Invoke-RestMethod -Uri "http://localhost:8086/api/orders" -Method Post -ContentType "application/json" -Body $body
-   }
+2. Start 2–3 instances of any downstream service, each on a different port, e.g. for shipping-service:
+   ```bash
+   mvn spring-boot:run "-Dspring-boot.run.arguments=--server.port=8091"
    ```
-4. **Watch:** each consumer terminal prints a *different subset* of the orders. The work was divided across the group.
-
-### Things you'll observe
-
-- **Split is uneven** (e.g. 2 / 2 / 5) because the partition is chosen by `hash(orderId) % partitions`, not round-robin.
-- **Add a 4th instance** → one consumer sits **idle** (only 3 partitions to go around). It's a hot standby.
-- **Rebalance**: every time an instance joins or leaves, Kafka re-divides the partitions among the current members (you'll see "rebalance" / "partitions assigned" in the logs). There's a brief pause while this happens.
+3. Send a burst of orders and watch the instances split the work by partition (uneven split is
+   expected — partition is chosen by `hash(orderId)`, not round-robin).
 
 ---
 
-## 7. Useful Kafka CLI commands
+## 8. Useful Kafka CLI commands
 
 Run inside the broker container (`docker exec kafka ...`).
 On Windows Git Bash, prefix with `export MSYS_NO_PATHCONV=1` so paths aren't mangled.
@@ -175,25 +220,16 @@ On Windows Git Bash, prefix with `export MSYS_NO_PATHCONV=1` so paths aren't man
 ```bash
 docker exec kafka /opt/kafka/bin/kafka-topics.sh --list --bootstrap-server localhost:9092
 ```
+You should see `orders`, `stock-events`, `payment-events`, and their `.DLT` counterparts.
 
 **Describe a topic (partitions, replicas)**
 ```bash
-docker exec kafka /opt/kafka/bin/kafka-topics.sh --describe --topic orders --bootstrap-server localhost:9092
-```
-
-**Increase partitions (can only go up, never down)**
-```bash
-docker exec kafka /opt/kafka/bin/kafka-topics.sh --alter --topic orders --partitions 3 --bootstrap-server localhost:9092
+docker exec kafka /opt/kafka/bin/kafka-topics.sh --describe --topic stock-events --bootstrap-server localhost:9092
 ```
 
 **Inspect a consumer group — members, assignment, and LAG**
 ```bash
-docker exec kafka /opt/kafka/bin/kafka-consumer-groups.sh --describe --group shipping-group --bootstrap-server localhost:9092
-```
-
-**Just the group members (count the rows = group size)**
-```bash
-docker exec kafka /opt/kafka/bin/kafka-consumer-groups.sh --describe --group shipping-group --members --bootstrap-server localhost:9092
+docker exec kafka /opt/kafka/bin/kafka-consumer-groups.sh --describe --group payment-group --bootstrap-server localhost:9092
 ```
 
 > **LAG** is the key health number: `end offset − current offset` = unread backlog.
@@ -201,18 +237,27 @@ docker exec kafka /opt/kafka/bin/kafka-consumer-groups.sh --describe --group shi
 
 ---
 
-## 8. Key things learned (and gotchas hit)
+## 9. Key things learned (and gotchas hit)
 
+- **Saga / choreography:** services react to each other's events with no central orchestrator;
+  the overall flow only exists implicitly, spread across independent consumers.
+- **Compensating transaction:** the "undo" for a step that already happened (releasing stock
+  after a failed payment) — not a database rollback, since the reservation already committed
+  and other services may have already reacted to it.
+- **One event shape, multiple stages:** `OrderEvent` carries optional `status`/`reason` fields
+  that are simply `null` on messages from a stage that doesn't set them. That let every
+  service keep a single `spring.json.value.default.type`, even `inventory-service`, which
+  consumes two different topics.
+- **Idempotent consumers:** every consumer dedupes by `orderId` before acting, so Kafka's
+  at-least-once delivery can never cause a double-decrement, double-charge, or double-ship.
 - **KRaft mode**: modern Kafka needs no ZooKeeper — the broker manages itself.
-- **`listeners` vs `advertised.listeners`**: `listeners` are the ports Kafka opens; `advertised.listeners` is the address handed back to clients and must be routable (never `0.0.0.0`). Getting this wrong crashed the broker on first boot.
-- **JSON across services**: the producer stamps its own class name in a header. The consumer (different package) must ignore it: `spring.json.use.type.headers=false` + `spring.json.value.default.type`.
-- **Topic creation**: the `NewTopic` bean creates a topic *only if it doesn't exist*, with the partitions/replicas you choose. It doesn't reconfigure an existing topic (except it can *increase* partitions).
-- **Single broker** = everything has replication factor 1 (only one copy possible).
+- **`listeners` vs `advertised.listeners`**: `listeners` are the ports Kafka opens; `advertised.listeners` is the address handed back to clients and must be routable (never `0.0.0.0`).
+- **JSON across services**: the producer stamps its own class name in a header by default; consumers ignore it (`spring.json.use.type.headers=false`) and rely on their own default type instead.
 - **PowerShell quoting**: POST JSON with `Invoke-RestMethod` + `ConvertTo-Json`, not escaped `curl.exe`.
 
 ---
 
-## 9. Progress & what's next
+## 10. Progress & what's next
 
 | Phase | Topic | Status |
 |-------|-------|--------|
@@ -221,5 +266,6 @@ docker exec kafka /opt/kafka/bin/kafka-consumer-groups.sh --describe --group shi
 | 3 | First Spring Boot producer + consumer | ✅ Done |
 | 4 | Two microservices exchanging JSON `Order` events | ✅ Done |
 | 5 | Partitions & scaling (multiple instances, rebalancing) | ✅ Done |
-| 6 | Error handling: retries & dead-letter topics | ⏭️ Next |
-| 7 | Advanced: Kafka Streams, exactly-once, schema registry | ⏳ Planned |
+| 6 | Error handling: retries & dead-letter topics | ✅ Done |
+| 7 | 4-service Saga with a compensating transaction, idempotent consumers | ✅ Done |
+| 8 | Advanced: Kafka Streams, exactly-once, schema registry | ⏳ Planned |

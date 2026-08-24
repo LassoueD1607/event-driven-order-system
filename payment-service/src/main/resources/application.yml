@@ -1,23 +1,20 @@
 spring:
   application:
-    name: shipping-service
+    name: payment-service
   kafka:
     bootstrap-servers: localhost:9092
-    # Producer settings are needed so the error handler can publish failed messages to the DLT.
     producer:
       key-serializer: org.apache.kafka.common.serialization.StringSerializer
       value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
     consumer:
-      group-id: shipping-group
+      group-id: payment-group
       auto-offset-reset: earliest
       key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
       value-deserializer: org.springframework.kafka.support.serializer.JsonDeserializer
       properties:
-        # The producer tags each message with its own class name. Ignore that header
-        # and always deserialize into this service's Order class instead.
-        spring.json.trusted.packages: "com.example.shippingservice.model"
+        spring.json.trusted.packages: "com.example.paymentservice.model"
         spring.json.use.type.headers: false
-        spring.json.value.default.type: com.example.shippingservice.model.Order
+        spring.json.value.default.type: com.example.paymentservice.model.OrderEvent
 
 server:
-  port: 8085
+  port: 8088
